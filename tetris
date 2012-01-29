@@ -1,0 +1,1094 @@
+;; The first three lines of this file were inserted by DrRacket. They record metadata
+;; about the language level of this file in a form that our tools can easily process.
+#reader(lib "htdp-intermediate-lambda-reader.ss" "lang")((modname homework8) (read-case-sensitive #t) (teachpacks ()) (htdp-settings #(#t constructor repeating-decimal #f #t none #f ())))
+(require 2htdp/image)
+(require 2htdp/universe)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Data Definitions
+
+;; A Block is a (make-block Number Number String)
+(define-struct block (x y color))
+
+;; A Tetra is a (make-tetra Posn BSet)
+;; The center point is the point around which the tetra rotates
+;; when it spins.
+(define-struct tetra (center blocks))
+
+;; A Set of Blocks (BSet) is one of:
+;; - empty
+;; - (cons Block BSet)
+;; Order does not matter.  Repetitions are NOT allowed.
+
+;; A World is a (make-world Tetra BSet)
+;; The BSet represents the pile of blocks at the bottom of the screen.
+(define-struct world (tetra pile))
+
+;; CONSTANTS : PROPERTIES THAT ARE ALWAYS THE SAME
+
+(define BOARD-HEIGHT 20) ; height in grid squares
+(define BOARD-WIDTH 10) ; width in grid squares
+(define CELL-SIZE/PIXELS 10) ; width of a game-board square
+(define BACKGROUND (empty-scene (* BOARD-WIDTH  CELL-SIZE/PIXELS)
+                                (* BOARD-HEIGHT CELL-SIZE/PIXELS)))
+
+;;; Board coordinate system is in grid/cell units,
+;;; with x & y increasing to the right & downward direction, respectively.
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; RENDERING CODE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; Image Number Number Image -> Image
+;;; Like place-image, but with "cell" coordinates
+(define (place-image-on-grid img x y scene)
+  (place-image img (* CELL-SIZE/PIXELS (+ x 1/2))
+               (* CELL-SIZE/PIXELS (- BOARD-HEIGHT (+ y 1/2)))
+               scene))
+
+(check-expect (place-image-on-grid 
+               (square CELL-SIZE/PIXELS "solid" "blue")
+               5 5 BACKGROUND)
+              (place-image (square CELL-SIZE/PIXELS "solid" "blue")
+                           (* CELL-SIZE/PIXELS (+ 5 1/2))
+                           (* CELL-SIZE/PIXELS (- BOARD-HEIGHT
+                                                  (+ 5 1/2))) BACKGROUND))
+
+;; draw-block : block -> image
+;; draws a block
+(define (draw-block b)
+  (square CELL-SIZE/PIXELS "solid" (block-color b)))
+
+(check-expect (draw-block (make-block 5 5 "blue"))
+              (square CELL-SIZE/PIXELS "solid" "blue"))
+
+;; BSet->scene : BSet scene -> image
+;; draws a BSet on a scene
+(define (BSet->scene bs scene)
+  (cond [(empty? bs) scene]
+        [else (place-image-on-grid 
+               (draw-block (first bs))
+               (block-x (first bs))
+               (block-y (first bs))
+               (BSet->scene (rest bs) scene))]))
+
+(check-expect (BSet->scene (list (make-block 5 5 "blue")) BACKGROUND)
+              (place-image-on-grid (draw-block (make-block 5 5 "blue"))
+                                   (block-x (make-block 5 5 "blue"))
+                                   (block-y (make-block 5 5 "blue"))
+                                   BACKGROUND))
+(check-expect (BSet->scene empty BACKGROUND)
+              BACKGROUND)
+
+;; tetra->scene : tetra scene -> image
+;; draws a tetra on a scene
+(define (tetra->scene t scene)
+  (BSet->scene (tetra-blocks t) scene))
+
+(check-expect (tetra->scene O BACKGROUND)
+              (BSet->scene (tetra-blocks O) BACKGROUND))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; TETRA
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define O (make-tetra (make-posn 5 18)
+                      (list (make-block 4 19 "green")
+                            (make-block 5 19 "green")
+                            (make-block 4 18 "green")
+                            (make-block 5 18 "green"))))
+
+(define I (make-tetra (make-posn 5 19)
+                      (list (make-block 4 19 "blue")
+                            (make-block 5 19 "blue")
+                            (make-block 6 19 "blue")
+                            (make-block 7 19 "blue"))))
+
+(define L (make-tetra (make-posn 4 18)
+                      (list (make-block 6 19 "purple")
+                            (make-block 6 18 "purple")
+                            (make-block 5 18 "purple")
+                            (make-block 4 18 "purple"))))
+
+(define J (make-tetra (make-posn 6 18)
+                      (list (make-block 4 19 "turquoise")
+                            (make-block 4 18 "turquoise")
+                            (make-block 5 18 "turquoise")
+                            (make-block 6 18 "turquoise"))))
+
+(define T (make-tetra (make-posn 5 18)
+                      (list (make-block 5 19 "orange")
+                            (make-block 5 18 "orange")
+                            (make-block 4 18 "orange")
+                            (make-block 6 18 "orange"))))
+
+(define Z (make-tetra (make-posn 6 18)
+                      (list (make-block 4 19 "pink")
+                            (make-block 5 19 "pink")
+                            (make-block 5 18 "pink")
+                            (make-block 6 18 "pink"))))
+
+(define S (make-tetra (make-posn 6 19)
+                      (list (make-block 6 19 "red")
+                            (make-block 5 19 "red")
+                            (make-block 5 18 "red")
+                            (make-block 4 18 "red"))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; COLLISIONS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; block-bottom? : block -> boolean
+;; Is the block at the bottom of the grid?
+(define (block-bottom? b)
+  (<= (block-y b) 0))
+
+(check-expect (block-bottom? (make-block 5 0 "blue")) true)
+(check-expect (block-bottom? (make-block 5 3 "blue")) false)
+
+;; BSet-bottom? : BSet -> boolean
+;; Is the BSet at the bottom of the grid?
+(define (BSet-bottom? bs) 
+  (ormap block-bottom? bs))
+(check-expect (BSet-bottom? (list (make-block 5 1 "blue")
+                                  (make-block 3 4 "blue")))
+              false)
+
+(check-expect (BSet-bottom? (list (make-block 5 0 "blue")))
+              true)
+
+;;;; reach-bottom? : tetra -> boolean
+;; Is tetra at the bottom of the grid?
+(define (reach-bottom? t)
+  (BSet-bottom? (tetra-blocks t)))
+
+(check-expect (reach-bottom? O) false)
+(check-expect (reach-bottom? (make-tetra (make-posn 5 5)
+                                         (list (make-block 3 0 "blue"))))
+              true)
+
+;; block-right? : block -> boolean
+;; Is the block at the right side of the grid?
+(define (block-right? b)
+  (>= (block-x b) (- BOARD-WIDTH 1)))
+
+(check-expect (block-right? (make-block 9 3 "blue")) true) 
+(check-expect (block-right? (make-block 3 3 "blue")) false)
+
+;;;; BSet-right? : BSet -> boolean
+;; Is the BSet at the right side of the grid?
+(define (BSet-right? bs)
+  (ormap block-right? bs))
+
+(check-expect (BSet-right? (list (make-block 9 3 "blue")
+                                  (make-block 3 4 "blue"))) true)
+(check-expect (BSet-right? (list (make-block 5 0 "blue"))) false)
+
+;; block-left? : block -> boolean
+;; Is the block at the left side of the grid?
+(define (block-left? b)
+  (<= (block-x b) 0))
+
+(check-expect (block-left? (make-block 0 4 "blue")) true)
+(check-expect (block-left? (make-block 2 3 "blue")) false)
+
+;;;; BSet-left? : BSet -> boolean
+;; Is the BSet at the left side of the grid?
+(define (BSet-left? bs)
+  (ormap block-left? bs))
+
+(check-expect (BSet-left? (list (make-block 0 1 "blue")
+                                (make-block 10 4 "blue"))) true)
+(check-expect (BSet-left? (list (make-block 10 3 "blue"))) false)
+  
+;; reach-side? : BSet -> boolean
+;; Is the BSet at the side of the grid?  
+(define (reach-side? bs)
+  (or (BSet-left? bs)
+      (BSet-right? bs))) 
+
+(check-expect (reach-side? (list (make-block 0 5 "blue"))) true)
+(check-expect (reach-side? (list (make-block 0 1 "blue")
+                                 (make-block 10 4 "blue")))
+              true)
+
+;; block-top? : block -> boolean
+;; Is the block at the top of the grid?
+(define (block-top? b)
+  (>= (block-y b) (- BOARD-HEIGHT 1)))
+
+(check-expect (block-top? (make-block 9 10 "blue")) false) 
+(check-expect (block-top? (make-block 4 20 "blue")) true)
+
+;; BSet-top? : BSet -> boolean
+;; Is the BSet at the top of the grid?
+(define (BSet-top? bs)
+  (ormap block-top? bs))
+
+(check-expect (BSet-top? (list (make-block 5 20 "blue")
+                               (make-block 6 21 "blue"))) true)
+(check-expect (BSet-top? (list (make-block 10 3 "blue"))) false)
+(check-expect (BSet-top? empty) false)
+
+;; reach-top? : world -> boolean
+;; Is the pile in the world at the top of the grid?
+(define (reach-top? w)
+  (BSet-top? (world-pile w)))
+
+(check-expect (reach-top? (make-world O (list (make-block 5 5 "blue")))) false)
+(check-expect (reach-top? (make-world O
+                                      (list (make-block 0 25 "blue")
+                                            (make-block 4 22 "blue"))))
+              true)
+
+;; block-on-top-block?: block block -> boolean
+;; determine if the first block is on top of the second block
+(define (block-on-top-block? b1 b2)
+  (and (= (block-x b1) (block-x b2)) 
+       (= (block-y b1) (+ 1 (block-y b2)))))
+
+(check-expect (block-on-top-block? (make-block 5 19 "blue")
+                                   (make-block 6 19 "blue")) false) 
+
+(check-expect (block-on-top-block? (make-block 6 20 "blue")
+                                   (make-block 6 19 "blue")) true)
+
+;; block-on-top-Bset? : block Bset -> boolean
+;; determine if the single block is ontop of the set of blocks
+(define (block-on-top-Bset?  b bs)
+  (cond
+    [(empty? bs) false]
+    [else
+     (local [(define (block-on-top-block bs) 
+               (block-on-top-block? b bs))]
+       (ormap block-on-top-block bs))])) 
+
+(check-expect (block-on-top-Bset? (make-block 6 20 "blue") 
+                                  (list (make-block 6 19 "blue")
+                                        (make-block 6 18 "blue"))) true)
+(check-expect (block-on-top-Bset? (make-block 5 5 "blue") empty)
+              false)
+
+;; Bset-on-top-Bset?: Bset Bset -> boolean
+;; determine if any of the first Bset's block is ontop the other Bset's blocks
+(define (Bset-on-top-Bset? bs1 bs2)
+  (cond 
+    [(empty? bs1) false]
+    [else 
+     (local 
+       [(define (block-on-top-Bset b)
+          (block-on-top-Bset? b bs2))]
+       (ormap block-on-top-Bset bs1))]))
+       
+(check-expect (Bset-on-top-Bset? 
+               (list (make-block 4 1 "blue") (make-block 5 1 "blue"))
+               (list (make-block 2 0 "blue") (make-block 3 0 "blue"))) false )
+(check-expect (Bset-on-top-Bset? 
+               (list (make-block 2 1 "blue") (make-block 2 2 "blue"))
+               (list (make-block 2 0 "blue") (make-block 3 0 "blue"))) true)
+
+;; on-top?: world -> boolean
+;; check whether the tetra is ontop of any tetras in the world's pile
+(define (on-top? w)
+  (Bset-on-top-Bset? (tetra-blocks (world-tetra w)) 
+                     (world-pile w)))
+
+(check-expect (on-top?
+               (make-world (make-tetra (make-posn 5 5)
+                                       (list (make-block 4 1 "blue")
+                                             (make-block 5 1 "blue")))
+                           (list (make-block 2 0 "blue")
+                                 (make-block 3 0 "blue")))) false)
+(check-expect (on-top?
+               (make-world (make-tetra (make-posn 5 5)
+                                       (list (make-block 2 1 "blue")
+                                             (make-block 2 1 "blue")))
+                           (list (make-block 2 0 "blue")
+                                 (make-block 3 0 "blue")))) true)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; MOTION
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;; block-move : symbol block -> block
+;; move the block one grid unit ( 1 CELL-SIZE/PIXELS)
+;; symbol will tell what direction the block is going
+(define (block-move s b)
+  (local 
+    [(define left (make-block (- (block-x b) 1)  (block-y b)
+                               (block-color b)))
+     (define right (make-block (add1(block-x b))  (block-y b)
+                               (block-color b)))
+     (define down (make-block (block-x b) (- (block-y b) 1)
+                              (block-color b)))]
+  (cond
+    [(symbol=? 'left s ) left]
+    [(symbol=? 'right s ) right]
+    [(symbol=? 'down s ) down])))
+
+(check-expect (block-move 'down (make-block 5 10 "green"))   
+              (make-block 5 (- 10 1 ) "green"))
+
+(check-expect (block-move 'left (make-block 5 10 "green"))   
+              (make-block (- 5 1 ) 10 "green"))
+(check-expect (block-move 'right (make-block 5 10 "green"))   
+              (make-block (add1 5) 10 "green"))
+
+;; Bset-move  : symbol BSet -> Bset
+;; move the set of blocks one grid unit ( 1 CELL-SIZE/PIXELS) 
+;; symbol is the current direction of the set of blocks
+(define (Bset-move s bs)
+  (local
+    [(define (b-move b)
+       (block-move s b))]
+     (map b-move bs))) 
+
+(check-expect (Bset-move 'down (list (make-block 5 10 "green")))   
+              (list (make-block 5 (- 10 1 ) "green")))
+(check-expect (Bset-move 'left (list (make-block 5 10 "green")
+                                     (make-block 6 10 "green")
+                                     (make-block 7 10 "green")
+                                     (make-block 8 10 "green")))
+              (list (make-block 4 10 "green") 
+                    (make-block 5 10 "green") 
+                    (make-block 6 10 "green") 
+                    (make-block 7 10 "green")))
+(check-expect(Bset-move 'right (list (make-block 5 10 "green")
+                                     (make-block 6 10 "green")
+                                     (make-block 7 10 "green")
+                                     (make-block 8 10 "green")))
+             (list (make-block 6 10 "green") 
+                   (make-block 7 10 "green") 
+                   (make-block 8 10 "green") 
+                   (make-block 9 10 "green")))
+
+;; posn-move : symbol posn -> posn
+;; move the posn one grid unit 
+;; symbol is the direction we want to move
+(define (posn-move s p)
+  (local 
+    [(define left (make-posn (- (posn-x p) 1)
+                         (posn-y p)))
+     (define right  (make-posn (add1 (posn-x p))
+                         (posn-y p)))
+     (define down  (make-posn (posn-x p)
+                         (- (posn-y p) 1)))]
+  (cond
+    [(symbol=? 'left s ) left]
+    [(symbol=? 'right s ) right]
+    [(symbol=? 'down s ) down])))
+
+(check-expect (posn-move 'left (make-posn 7 4))
+              (make-posn 6 4))
+
+(check-expect (posn-move 'right (make-posn 3 4))
+              (make-posn 4 4))
+
+(check-expect (posn-move 'down (make-posn 5 5))
+              (make-posn 5 4))
+
+;; tetra-move : symbol tetra -> tetra
+;; moves the tetra one grid unit
+;; symbol is the current direction of the tetra
+(define (tetra-move s t)
+  (local  
+    [(define blocks (tetra-blocks t))
+     (define gogo
+      (make-tetra (posn-move s (tetra-center t))
+                               (Bset-move s blocks )))]
+    (cond [(reach-side? (tetra-blocks t)) t]
+          [else gogo])))
+
+
+(check-expect (tetra-move 'down (make-tetra (make-posn 5 5)
+                                           (list (make-block 4 5 "blue"))))
+              (make-tetra (make-posn 5 4) (list (make-block 4 4 "blue"))))
+(check-expect (tetra-move 'left (make-tetra 
+                                (make-posn 5 5)
+                                (list (make-block 4 2 "blue")
+                                      (make-block 7 6 "blue"))))
+              (make-tetra (make-posn 4 5) 
+                          (list (make-block 3 2 "blue")
+                                (make-block 6 6 "blue"))))
+(check-expect (tetra-move 'right (make-tetra (make-posn 5 5)
+                                            (list (make-block 4 2 "blue")
+                                                  (make-block 7 6 "blue"))))
+              (make-tetra (make-posn 6 5) (list (make-block 5 2 "blue")
+                                                (make-block 8 6 "blue"))))
+
+;; ATTENTION :
+;; Because of the complexity of Bset-rotate-ccw and Bset-rortate-cw
+;; I decided not to combine them together
+;; However, I do utilize "map" in them
+
+;; block-rotate-ccw : Posn Block -> Block
+;; Rotate the block 90 counterclockwise around the posn.
+(define (block-rotate-ccw c b)
+  (make-block (+ (posn-x c) (- (posn-y c) (block-y b)))
+              (+ (posn-y c) (- (block-x b) (posn-x c)))
+              (block-color b)))
+
+(check-expect (block-rotate-ccw (make-posn 4 5) 
+                                (make-block 5 10 "green"))
+              (make-block -1 6 "green"))
+
+;; Bset-rotate-ccw  : Posn BSet -> Bset
+;; Rotate the set of blocks 90 counterclockwise around the posn.
+(define (Bset-rotate-ccw  c bs)
+  (cond
+    [(reach-side? bs) bs]
+    [else 
+     (local 
+       [(define (rotateccw b)
+          (block-rotate-ccw c b))]
+       (map rotateccw bs))]))
+
+(check-expect (Bset-rotate-ccw (make-posn 5 10) 
+                               (list (make-block 5 10 "green")
+                                     (make-block 6 10 "green")
+                                     (make-block 7 10 "green")
+                                     (make-block 8 10 "green")))
+              (list (make-block 5 10 "green") 
+                    (make-block 5 11 "green") 
+                    (make-block 5 12 "green") 
+                    (make-block 5 13 "green")))
+(check-expect (Bset-rotate-ccw (make-posn 5 5) empty)
+              empty)
+
+
+;; block-rotate-cw : Posn Block -> Block
+;; Rotate the block 90 clockwise around the posn.
+;; or perform three counterclockwise rotations.
+(define (block-rotate-cw c b)
+  (block-rotate-ccw c (block-rotate-ccw c (block-rotate-ccw c b))))
+(check-expect (block-rotate-cw (make-posn 4 5) 
+                               (make-block 5 10 "green"))
+              (make-block 9 4 "green"))
+
+;; Bset-rotate-cw  : Posn BSet -> Bset
+;; Rotate the set of blocks 90 clockwise around the posn.
+(define (Bset-rotate-cw  c bs)
+  (cond
+    [(reach-side? bs) bs]
+    [else 
+     (local 
+       [(define (rotatecw b)
+          (block-rotate-cw c b))]
+       (map rotatecw bs))])) 
+
+(check-expect (Bset-rotate-cw (make-posn 5 10) 
+                              (list (make-block 5 10 "green")
+                                    (make-block 6 10 "green")
+                                    (make-block 7 10 "green")
+                                    (make-block 8 10 "green")))
+              (list (make-block 5 10 "green")
+                    (make-block 5 9 "green")
+                    (make-block 5 8 "green") 
+                    (make-block 5 7 "green")))
+
+
+;; block-off-board?: block -> boolean
+;; check whether a block is out of the board
+(define (block-off-board? b)
+  (or 
+   (< (block-x b ) 0)  
+   (> (block-x  b)(- BOARD-WIDTH 1))))  
+(check-expect (block-off-board? (make-block -1 8 "green")) true) 
+(check-expect (block-off-board? (make-block 10 2 "green")) true)
+(check-expect (block-off-board? (make-block 2 5 "green" )) false)
+
+;; bset-off-board?: bset -> boolean
+;; check whether the bset has any block that is off the board
+(define (bset-off-board? bset)
+  (ormap block-off-board? bset))
+
+(check-expect (bset-off-board? 
+               (list 
+                (make-block 10 2 "green" )
+                (make-block 2 5 "green"))) true)          
+(check-expect (bset-off-board? 
+               (list 
+                (make-block 2 8 "green")
+                (make-block 2 5 "green"))) false) 
+
+;; Bset-proper-rotate-cw: Posn Bset -> Bset
+;; Bset-proper-rotate-cw will call Bset-rotate-cw
+;;--if the new Bset is not off the board -> keep it
+;;--if the new Bset is off the board -> rotate ccw
+ 
+(define (Bset-proper-rotate-cw c bs )
+  (local
+    ((define rotate-cw (Bset-rotate-cw c bs)))
+  (cond
+    [(bset-off-board? rotate-cw) bs]
+    [else rotate-cw])))
+
+(check-expect (Bset-proper-rotate-cw (make-posn 3 19 )
+                                     (list (make-block 0 19 "blue")
+                                           (make-block 1 19 "blue")
+                                           (make-block 2 19 "blue")
+                                           (make-block 3 19 "blue")))
+              (list (make-block 0 19 "blue") 
+                    (make-block 1 19 "blue") 
+                    (make-block 2 19 "blue") 
+                    (make-block 3 19 "blue")))
+
+(check-expect (Bset-proper-rotate-cw (make-posn 3 19 )
+                                     (list (make-block 0 19 "blue")
+                                           (make-block 1 19 "blue")
+                                           (make-block 2 19 "blue")
+                                           (make-block 3 19 "blue")))
+              (list (make-block 0 19 "blue") 
+                    (make-block 1 19 "blue") 
+                    (make-block 2 19 "blue") 
+                    (make-block 3 19 "blue")))
+
+;; Bset-proper-rotate-ccw: Posn Bset -> Bset
+;; Bset-proper-rotate-ccw will call Bset-rotate-ccw
+;;--if the new Bset is not off the board -> keep it
+;;--if the new Bset is off the board -> give the original Bset
+
+(define (Bset-proper-rotate-ccw c bs )
+  (local
+    ((define rotate-ccw (Bset-rotate-ccw  c bs)))
+  (cond
+    [(bset-off-board? rotate-ccw) bs]
+    [else rotate-ccw])))
+
+(check-expect 
+ (Bset-proper-rotate-ccw (make-posn 3 19 )
+                         (list (make-block 0 19 "blue") 
+                               (make-block 1 19 "blue") 
+                               (make-block 2 19 "blue") 
+                               (make-block 3 19 "blue")))
+ (list (make-block 0 19 "blue")
+       (make-block 1 19 "blue") 
+       (make-block 2 19 "blue") 
+       (make-block 3 19 "blue")))
+(check-expect (Bset-proper-rotate-ccw  (make-posn 3 19)
+                                       (list (make-block 0 19 "blue") 
+                                             (make-block 1 19 "blue") 
+                                             (make-block 2 19 "blue")
+                                             (make-block 3 19 "blue")))
+              (list (make-block 0 19 "blue") 
+                    (make-block 1 19 "blue")
+                    (make-block 2 19 "blue")
+                    (make-block 3 19 "blue")))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; REMOVE & MOVE BLOCKS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; check-y : lon block -> boolean
+;; Are any of the numbers in lon in block-y?
+(define (check-y lon b)
+  (cond [(empty? lon) false]
+        [(equal? (block-y b) (first lon)) true]
+        [else (check-y (rest lon) b)]))
+
+(check-expect (check-y (list 5 6 9) (make-block 3 6 "blue")) true)
+(check-expect (check-y (list 4 5) (make-block 3 6 "blue")) false)
+(check-expect (check-y (list 5) (make-block 5 5 "blue")) true) 
+
+;; remove-blocks-at-y : y BSet -> BSet
+;; removes all the blocks that have the given y-coordinate
+(define (remove-blocks-at-y y bs)
+  (cond [(empty? bs) empty]
+        [(= y (block-y (first bs)))
+         (remove-blocks-at-y y (rest bs))]
+        [else (cons (first bs) (remove-blocks-at-y y (rest bs)))]))
+
+(check-expect (remove-blocks-at-y 0 (list (make-block 0 0 "green") 
+                                          (make-block 1 0 "green") 
+                                          (make-block 3 0 "green")
+                                          (make-block 4 0 "green")
+                                          (make-block 5 0 "green")
+                                          (make-block 6 0 "green")
+                                          (make-block 7 0 "green")
+                                          (make-block 8 0 "green")
+                                          (make-block 9 0 "green")
+                                          (make-block 10 0 "green")))
+              empty)
+
+(check-expect (remove-blocks-at-y 5 
+                                  (cons (make-block 3 6 "blue")
+                                        (cons (make-block 3 5 "red") empty)))
+              (list (make-block 3 6 "blue"))) 
+
+;; remove-blocks-at-multiply-y: lon bset -> bset
+;; remove all the blocks that has the y-coordinate
+;; in the list of number
+
+(define (remove-blocks-at-multiple-y lon bset)
+  (cond
+    [(empty? lon) bset]
+    [(empty? bset) empty]
+    [else (remove-blocks-at-multiple-y 
+           (rest lon)
+           (remove-blocks-at-y (first lon) bset))]))
+(check-expect 
+ (remove-blocks-at-multiple-y (list 0 4 5 6)
+                              (list (make-block 0 0 "green") 
+                                    (make-block 1 0 "green") 
+                                    (make-block 3 0 "green")
+                                    (make-block 4 0 "green")
+                                    (make-block 5 4 "green")
+                                    (make-block 6 4 "green")
+                                    (make-block 7 4 "green")
+                                    (make-block 8 5 "green")
+                                    (make-block 9 6 "green")
+                                    (make-block 10 7 "green")))
+ (list (make-block 10 7 "green")))
+(check-expect (remove-blocks-at-multiple-y 
+               (list 5) 
+               (list(make-block 3 6 "blue")
+                    (make-block 3 5 "red")))
+              (list (make-block 3 6 "blue")))
+
+;; higher-y? : lon block -> boolean
+;; Are any numbers in lon less than block-y?
+(define (higher-y? lon b)
+  (cond [(empty? lon) false]
+        [(> (block-y b) (first lon)) true]
+        [else (higher-y? (rest lon) b)]))
+
+(check-expect (higher-y? (list 5 6 9) (make-block 3 6 "blue")) true)
+(check-expect (higher-y? (list 4 5) (make-block 3 1 "blue")) false)
+
+;; amt-higher-y : lon block -> number
+;; How many numbers in lon are less than block-y?
+(define (amt-higher-y lon b)
+  (cond [(empty? lon) 0]
+        [(> (block-y b) (first lon)) (+ 1 (amt-higher-y (rest lon) b))]
+        [else (amt-higher-y (rest lon) b)]))
+
+(check-expect (amt-higher-y (list 5 6 9) (make-block 3 6 "blue")) 1)
+(check-expect (amt-higher-y (list 4 5) (make-block 3 9 "blue")) 2)
+
+;; lower-block : lon block -> block
+(define (lower-block lon b)
+  (make-block (block-x b)
+              (- (block-y b) (amt-higher-y lon b))
+              (block-color b)))
+
+(check-expect (lower-block (list 5 6 9) (make-block 3 6 "blue"))
+              (make-block 3 5 "blue"))
+(check-expect (lower-block (list 4 5) (make-block 3 9 "blue"))
+              (make-block 3 7 "blue"))
+
+
+;; lon-move-BSet-down : lon BSet -> BSet
+;; moves all the blocks in rows higher than the numbers in lon down by one
+(define (lon-move-BSet-down lon bs)
+  (cond [(empty? bs) empty]
+        [(empty? lon) bs]
+        [(higher-y? lon (first bs))
+         (cons (lower-block lon (first bs)) (lon-move-BSet-down lon (rest bs)))]
+        [else (cons (first bs) (lon-move-BSet-down lon (rest bs)))]))
+
+(check-expect (lon-move-BSet-down empty 
+                                  (cons (make-block 3 6 "blue")
+                                        (cons (make-block 3 5 "red") empty)))
+              (list (make-block 3 6 "blue")
+                    (make-block 3 5 "red")))
+
+(check-expect (lon-move-BSet-down (list 1 0)
+                                  (list (make-block 0 2 "green") 
+                                        (make-block 1 2 "green") 
+                                        (make-block 3 2 "green")
+                                        (make-block 4 2 "green")
+                                        (make-block 5 2 "green")
+                                        (make-block 6 2 "green")
+                                        (make-block 7 2 "green")
+                                        (make-block 8 2 "green")
+                                        (make-block 0 3 "green") 
+                                        (make-block 1 3 "green") 
+                                        (make-block 3 3 "green")
+                                        (make-block 4 3 "green")
+                                        (make-block 5 3 "green")
+                                        (make-block 6 3 "green")
+                                        (make-block 7 3 "green")
+                                        (make-block 8 3 "green")))
+              (list
+               (make-block 0 0 "green")
+               (make-block 1 0 "green")
+               (make-block 3 0 "green")
+               (make-block 4 0 "green")
+               (make-block 5 0 "green")
+               (make-block 6 0 "green")
+               (make-block 7 0 "green")
+               (make-block 8 0 "green")
+               (make-block 0 1 "green")
+               (make-block 1 1 "green")
+               (make-block 3 1 "green")
+               (make-block 4 1 "green")
+               (make-block 5 1 "green")
+               (make-block 6 1 "green")
+               (make-block 7 1 "green")
+               (make-block 8 1 "green")))
+
+;; remove-and-move-down : lon bset -> bset
+;; removes blocks in a full row and moves higher blocks down by one
+
+(define (remove-and-move-down lon bset)
+  (lon-move-BSet-down 
+     lon 
+     (remove-blocks-at-multiple-y lon bset)))
+
+(check-expect
+(remove-and-move-down 
+ (list 0)
+ (list
+  (make-block 0 0 "green") 
+  (make-block 1 0 "green") 
+  (make-block 3 0 "green")
+  (make-block 4 0 "green")
+  (make-block 5 0 "green")
+  (make-block 6 0 "green")
+  (make-block 7 0 "green")
+  (make-block 8 0 "green")
+  (make-block 9 0 "green")
+  (make-block 10 0 "green")
+  (make-block 0 2 "green") 
+  (make-block 1 2 "green") 
+  (make-block 3 2 "green")
+  (make-block 4 2 "green")
+  (make-block 5 2 "green")
+  (make-block 6 2 "green")
+  (make-block 7 2 "green")
+  (make-block 8 2 "green")
+  (make-block 0 1 "green") 
+  (make-block 1 1 "green") 
+  (make-block 3 1 "green")
+  (make-block 4 1 "green")
+  (make-block 5 1 "green")
+  (make-block 6 1 "green")
+  (make-block 7 1 "green")
+  (make-block 8 1 "green")))
+(list
+ (make-block 0 1 "green")(make-block 1 1 "green")
+ (make-block 3 1 "green")(make-block 4 1 "green")
+ (make-block 5 1 "green")(make-block 6 1 "green")
+ (make-block 7 1 "green")(make-block 8 1 "green")
+ (make-block 0 0 "green")(make-block 1 0 "green")
+ (make-block 3 0 "green")(make-block 4 0 "green")
+ (make-block 5 0 "green")(make-block 6 0 "green")
+ (make-block 7 0 "green")(make-block 8 0 "green")))
+
+(check-expect 
+ (remove-and-move-down (list 4 3)
+                       (list (make-block 6 5 "blue")
+                             (make-block 6 2 "blue")))
+ (list (make-block 6 3 "blue")
+       (make-block 6 2 "blue")))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; FULL ROW CASE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;lon is either:
+;;--empty
+;;(cons number lon)
+
+;; on-a-row?: block number -> boolean
+;; check to see if a block is on the given row
+(define (on-a-row? b num)
+  (= (block-y b) num)) 
+(check-expect (on-a-row? (make-block 2 0 "green") 0) true)
+(check-expect (on-a-row? (make-block 2 1 "green") 0) false)
+
+;; count-block: BSET number -> number
+;; count how many blocks are in the current row
+(define (count-block bset num)
+  (cond
+    [(empty? bset) 0]
+    [else (+ ( cond [(on-a-row? (first bset) num) 1] [else 0])
+             (count-block (rest bset) num))]))
+
+(check-expect 
+ (count-block (list (make-block 2 0 "green") 
+                    (make-block 3 0 "green") 
+                    (make-block 4 1 "green") ) 0) 2)
+(check-expect 
+ (count-block (list (make-block 4 1 "green") ) 0) 0)
+
+;; full-row?: Bset number -> boolean
+;; check the given row to see whether it is full or not
+(define (full-row? bset num)
+  (cond
+    [(empty? bset) false]
+    [else (= (count-block bset num) BOARD-WIDTH )]))
+(check-expect (full-row? (list (make-block 0 0 "green") 
+                               (make-block 1 0 "green") 
+                               (make-block 3 0 "green")
+                               (make-block 4 0 "green")
+                               (make-block 5 0 "green")
+                               (make-block 6 0 "green")
+                               (make-block 7 0 "green")
+                               (make-block 8 0 "green")
+                               (make-block 9 0 "green")
+                               (make-block 10 0 "green"))0) true)
+;; create-row-list: number -> lon
+;; create the list of rows'number based on BOARD-HEIGHT - 1
+(define (create-row-list num)
+  (cond
+    [(= num 0) (cons 0 empty)]
+    [else (cons num ( create-row-list (- num 1)))]))
+(check-expect (create-row-list 9) (list 9 8 7 6 5 4 3 2 1 0 ))
+(check-expect (create-row-list 10) (list 10 9 8 7 6 5 4 3 2 1 0))
+
+;;create the list of rows for the current game
+(define ROW-LIST (create-row-list (- BOARD-HEIGHT 1)))
+
+;; full-rows-num: bset lon -> lon
+;; number is the highest row' number
+;; go through each rows and call is-full-rows
+;; cons the row number to a list
+;; if lon = empty --> there is no full rows
+
+(define (full-rows-num bset lon)
+  (local 
+    [(define (full-row number)
+       (full-row? bset number))]
+    (filter full-row lon)))
+
+(check-expect (full-rows-num (list (make-block 0 0 "green") 
+                                   (make-block 1 0 "green") 
+                                   (make-block 2 0 "green")
+                                   (make-block 3 0 "green")
+                                   (make-block 4 0 "green")
+                                   (make-block 5 0 "green")
+                                   (make-block 6 0 "green")
+                                   (make-block 7 0 "green")
+                                   (make-block 8 0 "green")
+                                   (make-block 9 0 "green")
+                                   (make-block 0 3 "green") 
+                                   (make-block 1 3 "green") 
+                                   (make-block 2 3 "green")
+                                   (make-block 3 3 "green")
+                                   (make-block 4 3 "green")
+                                   (make-block 5 3 "green")
+                                   (make-block 6 3 "green")
+                                   (make-block 7 3 "green")
+                                   (make-block 8 3 "green")
+                                   (make-block 9 3 "green")
+                                   ) '(9 8 7 6 5 4 3 2 1 0))
+              (list 3 0))     
+
+(check-expect (full-rows-num (list (make-block 0 0 "green") 
+                                   (make-block 1 0 "green") 
+                                   (make-block 2 0 "green")
+                                   (make-block 3 0 "green")
+                                   (make-block 4 0 "green")
+                                   (make-block 5 0 "green")
+                                   (make-block 6 0 "green")
+                                   (make-block 7 0 "green")
+                                   (make-block 8 0 "green")
+                                   (make-block 9 0 "green")
+                                   (make-block 0 3 "green") 
+                                   (make-block 1 3 "green") 
+                                   (make-block 2 3 "green")
+                                   (make-block 3 3 "green")
+                                   (make-block 4 3 "green")
+                                   (make-block 5 3 "green")
+                                   (make-block 6 3 "green")
+                                   (make-block 7 3 "green")
+                                   (make-block 8 3 "green")
+                                   (make-block 9 3 "green")
+                                   ) 
+                             (list 19 18 17 16 15 14 
+                                   13 12 11 10 9 8 7
+                                   6 5 4 3 2 1 0))
+              (list 3 0))   
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; AFTER COLLISION
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; make-new-pile: tetra Bset -> Bset
+;; create the new block of set after collision
+(define (make-new-pile t bs)
+  (append (tetra-blocks t) bs))
+
+(check-expect (make-new-pile O empty)
+              (list (make-block 4 19 "green")
+                    (make-block 5 19 "green")
+                    (make-block 4 18 "green") 
+                    (make-block 5 18 "green")))
+
+;;create-tetra: num -> tetra
+;;create the tetra corresponding to an assignned number
+(define (create-tetra num)
+  (cond
+    [(= num 1) O]
+    [(= num 2) I]
+    ((= num 3) L)
+    ((= num 4) J)
+    ((= num 5) T)
+    ((= num 6) Z)
+    ((= num 7) S)))
+
+;; ORIGINAL WORLD
+(define WORLD1 (make-world 
+                (create-tetra (+ (random 7) 1))
+                empty))
+
+;; collision-world: world -> world
+;; create the world after collision
+;; cannot do check-expect because collision-world create the new tetra randomly
+;; collision-world also handle the case where a full row is created
+
+(define (collision-world w)
+  (local
+    ((define set  (world-pile w))
+     (define give-back-lon (full-rows-num set ROW-LIST)))
+    (cond
+      [(empty? give-back-lon)
+       (make-world (create-tetra (+ (random 7) 1))
+                   (make-new-pile (world-tetra w) set))]
+      [else 
+       (make-world (world-tetra w)
+                   (remove-and-move-down give-back-lon set))])))
+
+      
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; BIG BANG INTERFACE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; world->scene: world scene--> image
+;; draws the world, which has the moving tetra 
+;; and the piles of tetra at the bottom
+(define (world->scene w)
+  (tetra->scene (world-tetra w) 
+                (BSet->scene (world-pile w) BACKGROUND)))
+
+;; world->world: world -> world
+;; create the next world based on the current status of the game
+(define (world->world w)
+   (local 
+     ((define set  (world-pile w))
+      (define tetra  (world-tetra w))
+      (define give-back-lon   
+        (full-rows-num set ROW-LIST)))
+     (cond     
+       [(not(empty? give-back-lon)) (collision-world w)]
+       [(on-top? w) (collision-world w)] 
+       [(reach-bottom? tetra) (collision-world w)]     
+       [else (make-world  
+              (make-tetra 
+               (posn-move 'down (tetra-center tetra))
+               (Bset-move 'down (tetra-blocks tetra)))
+              set)]))) 
+
+;;; handle-key : world key-event -> world
+;;; Handle key-presses in the game.
+ 
+(define (handle-key w ke) 
+  (cond  
+    [(reach-bottom? (world-tetra w)) w]
+    [(on-top? w) w] 
+    [(reach-top? w) w] 
+    [(or (key=? ke "down") (key=? ke "left") (key=? ke "right"))
+     (make-world 
+      (tetra-move (string->symbol ke) (world-tetra w))
+      (world-pile w))]
+    [(key=? ke "s") (make-world 
+                     (make-tetra 
+                      (tetra-center (world-tetra w))
+                      (Bset-proper-rotate-cw (tetra-center (world-tetra w))
+                                             (tetra-blocks (world-tetra w))))
+                     (world-pile w))] 
+    [(key=? ke "a") (make-world 
+                     (make-tetra
+                      (tetra-center (world-tetra w))
+                      (Bset-proper-rotate-ccw (tetra-center (world-tetra w))
+                                              (tetra-blocks (world-tetra w))))
+                     (world-pile w))]
+    [else w])) 
+ 
+(check-expect (handle-key (make-world (make-tetra
+                                       (make-posn 5 5)
+                                       (list (make-block 3 0 "blue")))
+                                      empty) "left")
+              (make-world (make-tetra (make-posn 5 5)
+                                      (list (make-block 3 0 "blue"))) empty))
+
+(check-expect (handle-key (make-world (make-tetra
+                                       (make-posn 8 18)
+                                       (list (make-block 5 20 "blue")
+                                             (make-block 6 20 "blue")))
+                                      (list (make-block 5 20 "blue")
+                                            (make-block 6 20 "blue")))
+                          "right")
+              (make-world (make-tetra
+                           (make-posn 8 18)
+                           (list (make-block 5 20 "blue")
+                                 (make-block 6 20 "blue")))
+                          (list (make-block 5 20 "blue")
+                                (make-block 6 20 "blue"))))
+(check-expect (handle-key (make-world O
+                                      (list (make-block 0 25 "blue")
+                                            (make-block 4 22 "blue"))) "right")
+              (make-world (make-tetra
+                           (make-posn 5 18) (list
+                                             (make-block 4 19 "green")
+                                             (make-block 5 19 "green")
+                                             (make-block 4 18 "green")
+                                             (make-block 5 18 "green")))
+                          (list (make-block 0 25 "blue")
+                                (make-block 4 22 "blue"))))
+(check-expect (handle-key (make-world L empty) "left")
+              (make-world (make-tetra
+                           (make-posn 3 18)
+                           (list
+                            (make-block 5 19 "purple")
+                            (make-block 5 18 "purple")
+                            (make-block 4 18 "purple")
+                            (make-block 3 18 "purple")))
+                          empty))
+(check-expect (handle-key (make-world L empty) "right")
+              (make-world (make-tetra
+                           (make-posn 5 18)
+                           (list
+                            (make-block 7 19 "purple")
+                            (make-block 7 18 "purple")
+                            (make-block 6 18 "purple")
+                            (make-block 5 18 "purple")))
+                          empty))
+(check-expect (handle-key (make-world L empty) "s")
+              (make-world (make-tetra
+                           (make-posn 4 18)
+                           (list
+                            (make-block 5 16 "purple")
+                            (make-block 4 16 "purple")
+                            (make-block 4 17 "purple")
+                            (make-block 4 18 "purple")))
+                          empty))
+(check-expect (handle-key (make-world L empty) "a")
+              (make-world (make-tetra
+                           (make-posn 4 18)
+                           (list
+                            (make-block 3 20 "purple")
+                            (make-block 4 20 "purple")
+                            (make-block 4 19 "purple")
+                            (make-block 4 18 "purple")))
+                          empty))
+(check-expect (handle-key (make-world L empty) "down")
+              (make-world (make-tetra
+                           (make-posn 4 17)
+                           (list
+                            (make-block 6 18 "purple")
+                            (make-block 6 17 "purple")
+                            (make-block 5 17 "purple")
+                            (make-block 4 17 "purple")))
+                          empty))
+
+(big-bang WORLD1
+          (on-tick   world->world 0.5)           
+          (to-draw   world->scene)
+          (on-key    handle-key)
+          (stop-when reach-top?))
+
+
